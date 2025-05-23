@@ -1,0 +1,9 @@
+{
+  "name": "netlify-upload-function",
+  "version": "1.0.0",
+  "dependencies": {
+    "form-data": "^4.0.0",
+    "node-fetch": "^3.3.0",
+    "busboy": "^1.6.0"
+  }
+} 
