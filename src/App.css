@@ -1,0 +1,23 @@
+/* 추가 앱 전용 스타일 */
+.app {
+  min-height: 100vh;
+}
+
+/* 반응형 디자인 */
+@media (max-width: 768px) {
+  .container {
+    padding: 10px;
+  }
+  
+  .container > div {
+    grid-template-columns: 1fr !important;
+  }
+  
+  .form-row {
+    flex-direction: column;
+  }
+  
+  h1 {
+    font-size: 2rem;
+  }
+} 

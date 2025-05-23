@@ -1,0 +1,20 @@
+{
+  "name": "weblogen-generator",
+  "version": "1.0.0",
+  "description": "웹 로그 생성기 - 커스터마이징 가능한 HTML 생성 도구",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.15",
+    "@types/react-dom": "^18.2.7",
+    "@vitejs/plugin-react": "^4.0.3",
+    "vite": "^4.4.5"
+  }
+} 
