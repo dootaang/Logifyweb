@@ -5,10 +5,16 @@ import Navigation from '@/components/Navigation'
 import BannerFormLayout from '@/components/BannerFormLayout'
 import BannerGeneratorV2 from '@/generators/BannerGeneratorV2'
 import { DarkModeUtils } from '@/utils/styles'
+import { copyToAdvancedClipboard, copyToSimpleClipboard } from '@/utils/advancedClipboard'
 
 interface WordReplacement {
   from: string;
   to: string;
+}
+
+interface ChatSection {
+  id: string;
+  content: string;
 }
 
 interface TagStyle {
@@ -92,7 +98,8 @@ const defaultBannerConfig = {
   contentBackgroundColor: '#1a1a1a',
   contentTextColor: '#e0e0e0',
   fontSize: 15,
-  lineHeight: 1.8
+  lineHeight: 1.8,
+  chatSections: [] as ChatSection[]
 }
 
 export default function BannerPage() {
@@ -120,14 +127,75 @@ export default function BannerPage() {
     return defaultBannerConfig
   }
 
-  // localStorage에 설정 저장하기
+  // localStorage에 설정 저장하기 (용량 제한 및 이미지 데이터 제외)
   const saveConfig = (newConfig: any) => {
     try {
       if (typeof window !== 'undefined') {
-        localStorage.setItem('bannerConfig', JSON.stringify(newConfig))
+        // 저장할 설정에서 이미지 데이터 제외 (base64 이미지는 용량이 매우 큼)
+        const configToSave = { ...newConfig };
+        
+        // 이미지 URL이 base64 데이터인 경우 저장에서 제외
+        if (configToSave.imageUrl && configToSave.imageUrl.startsWith('data:')) {
+          delete configToSave.imageUrl;
+          console.log('💾 base64 이미지는 용량 절약을 위해 설정 저장에서 제외됩니다.');
+        }
+        
+        // 저장할 데이터를 JSON으로 변환
+        const dataToSave = JSON.stringify(configToSave);
+        
+        // 데이터 크기 체크 (2MB 제한)
+        const dataSizeKB = new Blob([dataToSave]).size / 1024;
+        const maxSizeKB = 2048; // 2MB
+        
+        if (dataSizeKB > maxSizeKB) {
+          console.warn(`⚠️ 설정 데이터가 너무 큽니다: ${dataSizeKB.toFixed(1)}KB > ${maxSizeKB}KB`);
+          return; // 저장하지 않음
+        }
+        
+        // localStorage에 저장 시도
+        localStorage.setItem('bannerConfig', dataToSave);
+        console.log(`💾 배너 설정 저장 완료 (${dataSizeKB.toFixed(1)}KB)`);
       }
     } catch (error) {
-      console.error('배너 설정을 저장하는 중 오류 발생:', error)
+      console.error('배너 설정을 저장하는 중 오류 발생:', error);
+      
+      // QuotaExceededError 처리
+      if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+        console.warn('📦 localStorage 용량이 부족합니다.');
+        
+        // 기존 저장된 설정들을 정리하여 공간 확보 시도
+        try {
+          const keysToClean = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (key.includes('auto') || key.includes('History') || key.includes('Temp'))) {
+              keysToClean.push(key);
+            }
+          }
+          
+          // 임시 데이터들 삭제
+          keysToClean.forEach(key => {
+            try {
+              localStorage.removeItem(key);
+              console.log(`🧹 임시 데이터 정리: ${key}`);
+            } catch (cleanError) {
+              console.warn(`정리 실패: ${key}`, cleanError);
+            }
+          });
+          
+          // 다시 저장 시도 (이미지 데이터 완전 제외)
+          const cleanConfig = { ...newConfig };
+          delete cleanConfig.imageUrl; // 이미지 URL 완전 제외
+          
+          const cleanData = JSON.stringify(cleanConfig);
+          localStorage.setItem('bannerConfig', cleanData);
+          console.log('✅ 정리 후 저장 성공');
+          
+        } catch (retryError) {
+          console.error('정리 후에도 저장 실패:', retryError);
+          alert('💾 설정 저장에 실패했습니다.\n\n브라우저 저장 공간이 부족할 수 있습니다.\n(이미지는 임시로만 사용되며 자동 저장되지 않습니다)');
+        }
+      }
     }
   }
 
@@ -216,11 +284,24 @@ export default function BannerPage() {
     setGeneratedHTML(html)
   }
 
-  const handleCopyHTML = () => {
-    if (typeof navigator !== 'undefined') {
-      navigator.clipboard.writeText(generatedHTML).then(() => {
-        alert('배너형 HTML 코드가 클립보드에 복사되었습니다!')
-      })
+  const handleCopyHTML = async () => {
+    try {
+      // 고급 클립보드 복사 시도 (HTML + 이미지)
+      const success = await copyToAdvancedClipboard({
+        htmlContent: generatedHTML,
+        plainTextContent: generatedHTML,
+        title: '배너형 로그',
+        author: '배너형 생성기'
+      });
+
+      if (success) {
+        alert('🎉 배너형 로그가 스타일과 이미지와 함께 클립보드에 복사되었습니다!\n\n이제 글쓰기 에디터에 붙여넣기하면 디자인이 그대로 적용됩니다.');
+      } else {
+        alert('📋 배너형 HTML 코드가 클립보드에 복사되었습니다!\n\n(고급 복사 기능을 지원하지 않는 브라우저입니다)');
+      }
+    } catch (error) {
+      console.error('클립보드 복사 실패:', error);
+      alert('❌ 클립보드 복사에 실패했습니다. 다시 시도해주세요.');
     }
   }
 
@@ -239,7 +320,7 @@ export default function BannerPage() {
         <div className="page-header">
           <h1 className="page-title">
             <span className="page-icon">🏞️</span>
-            배너형 로그 생성기
+            배너형 로그 제조기
           </h1>
           <p className="page-description">
             시각적으로 임팩트 있는 배너 스타일의 로그를 생성합니다.

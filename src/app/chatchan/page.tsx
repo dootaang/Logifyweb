@@ -5,6 +5,7 @@ import Navigation from '@/components/Navigation'
 import ChatchanFormLayout from '@/components/ChatchanFormLayout'
 import { useChatchanGeneratorV2 } from '@/generators/ChatchanGeneratorV2'
 import { DarkModeUtils } from '@/utils/styles'
+import { copyToAdvancedClipboard, copyToSimpleClipboard } from '@/utils/advancedClipboard'
 
 interface WordReplacement {
   from: string;
@@ -45,7 +46,7 @@ USER: 안녕하세요? 오늘 ^날씨^가 어때요?
 AI: 안녕하세요! 오늘 날씨는 맑고 화창합니다. 최고 기온은 $23도$로 예상됩니다. ***야외 활동하기 좋은 날씨네요!***`,
   selectedTheme: 'light',
   wordReplacements: [
-    { from: '', to: '' },
+    { from: 'AI', to: '봇' },
     { from: '', to: '' },
     { from: '', to: '' }
   ] as WordReplacement[]
@@ -54,9 +55,10 @@ AI: 안녕하세요! 오늘 날씨는 맑고 화창합니다. 최고 기온은 $
 export default function ChatchanPage() {
   const [config, setConfig] = useState(defaultChatchanConfig)
   const [generatedHTML, setGeneratedHTML] = useState('')
+  const [previewHTML, setPreviewHTML] = useState('')
 
   // 챗챈 생성기 훅
-  const { generateHTML: generateChatchanHTML } = useChatchanGeneratorV2(config)
+  const { generateHTML: generateChatchanHTML, generatePreviewHTML: generateChatchanPreviewHTML } = useChatchanGeneratorV2(config)
 
   // localStorage에서 설정 불러오기
   const loadConfig = () => {
@@ -79,14 +81,76 @@ export default function ChatchanPage() {
     }
   }
 
-  // localStorage에 설정 저장하기
+  // localStorage에 설정 저장하기 (용량 제한 및 이미지 데이터 제외)
   const saveConfig = (newConfig: any) => {
     try {
       if (typeof window !== 'undefined') {
-        localStorage.setItem('chatchanConfig', JSON.stringify(newConfig))
+        // 저장할 설정에서 이미지 데이터 제외 (base64 이미지는 용량이 매우 큼)
+        const configToSave = { ...newConfig };
+        
+        // 이미지 URL이 base64 데이터인 경우 저장에서 제외
+        if (configToSave.characterImageUrl && configToSave.characterImageUrl.startsWith('data:')) {
+          delete configToSave.characterImageUrl;
+          console.log('💾 base64 이미지는 용량 절약을 위해 설정 저장에서 제외됩니다.');
+        }
+        
+        // 저장할 데이터를 JSON으로 변환
+        const dataToSave = JSON.stringify(configToSave);
+        
+        // 데이터 크기 체크 (2MB 제한)
+        const dataSizeKB = new Blob([dataToSave]).size / 1024;
+        const maxSizeKB = 2048; // 2MB
+        
+        if (dataSizeKB > maxSizeKB) {
+          console.warn(`⚠️ 설정 데이터가 너무 큽니다: ${dataSizeKB.toFixed(1)}KB > ${maxSizeKB}KB`);
+          console.warn('💡 base64 이미지나 긴 텍스트가 포함되어 있는지 확인해주세요.');
+          return; // 저장하지 않음
+        }
+        
+        // localStorage에 저장 시도
+        localStorage.setItem('chatchanConfig', dataToSave);
+        console.log(`💾 챗챈 설정 저장 완료 (${dataSizeKB.toFixed(1)}KB)`);
       }
     } catch (error) {
-      console.error('챗챈 설정을 저장하는 중 오류 발생:', error)
+      console.error('챗챈 설정을 저장하는 중 오류 발생:', error);
+      
+      // QuotaExceededError 처리
+      if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+        console.warn('📦 localStorage 용량이 부족합니다.');
+        
+        // 기존 저장된 설정들을 정리하여 공간 확보 시도
+        try {
+          const keysToClean = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (key.includes('auto') || key.includes('History') || key.includes('Temp'))) {
+              keysToClean.push(key);
+            }
+          }
+          
+          // 임시 데이터들 삭제
+          keysToClean.forEach(key => {
+            try {
+              localStorage.removeItem(key);
+              console.log(`🧹 임시 데이터 정리: ${key}`);
+            } catch (cleanError) {
+              console.warn(`정리 실패: ${key}`, cleanError);
+            }
+          });
+          
+          // 다시 저장 시도 (이미지 데이터 완전 제외)
+          const cleanConfig = { ...newConfig };
+          delete cleanConfig.characterImageUrl; // 이미지 URL 완전 제외
+          
+          const cleanData = JSON.stringify(cleanConfig);
+          localStorage.setItem('chatchanConfig', cleanData);
+          console.log('✅ 정리 후 저장 성공');
+          
+        } catch (retryError) {
+          console.error('정리 후에도 저장 실패:', retryError);
+          alert('💾 설정 저장에 실패했습니다.\n\n브라우저 저장 공간이 부족할 수 있습니다.\n(이미지는 임시로만 사용되며 자동 저장되지 않습니다)');
+        }
+      }
     }
   }
 
@@ -128,8 +192,10 @@ export default function ChatchanPage() {
   // 설정이 변경될 때마다 자동 HTML 생성
   useEffect(() => {
     const html = generateChatchanHTML()
+    const preview = generateChatchanPreviewHTML()
     setGeneratedHTML(html)
-  }, [config, generateChatchanHTML])
+    setPreviewHTML(preview)
+  }, [config, generateChatchanHTML, generateChatchanPreviewHTML])
 
   // 핸들러 함수들
   const handleConfigChange = (newConfig: Partial<typeof defaultChatchanConfig>) => {
@@ -141,14 +207,29 @@ export default function ChatchanPage() {
 
   const handleGenerateHTML = () => {
     const html = generateChatchanHTML()
+    const preview = generateChatchanPreviewHTML()
     setGeneratedHTML(html)
+    setPreviewHTML(preview)
   }
 
-  const handleCopyHTML = () => {
-    if (typeof navigator !== 'undefined') {
-      navigator.clipboard.writeText(generatedHTML).then(() => {
-        alert('챗챈형 HTML 코드가 클립보드에 복사되었습니다!')
-      })
+  const handleCopyHTML = async () => {
+    try {
+      // 고급 클립보드 복사 시도 (HTML + 이미지)
+      const success = await copyToAdvancedClipboard({
+        htmlContent: generatedHTML,
+        plainTextContent: generatedHTML,
+        title: '챗챈형 로그',
+        author: '챗챈형 생성기'
+      });
+
+      if (success) {
+        alert('🎉 챗챈형 로그가 스타일과 이미지와 함께 클립보드에 복사되었습니다!\n\n이제 글쓰기 에디터에 붙여넣기하면 디자인이 그대로 적용됩니다.');
+      } else {
+        alert('📋 챗챈형 HTML 코드가 클립보드에 복사되었습니다!\n\n(고급 복사 기능을 지원하지 않는 브라우저입니다)');
+      }
+    } catch (error) {
+      console.error('클립보드 복사 실패:', error);
+      alert('❌ 클립보드 복사에 실패했습니다. 다시 시도해주세요.');
     }
   }
 
@@ -171,7 +252,7 @@ export default function ChatchanPage() {
         <div className="page-header">
           <h1 className="page-title">
             <span className="page-icon">💬</span>
-            챗챈형 로그 생성기
+            챗챈 로그 제조기 1.3
           </h1>
           <p className="page-description">
             채팅 형태의 대화형 로그를 생성합니다.
@@ -182,6 +263,7 @@ export default function ChatchanPage() {
           config={config}
           onConfigChange={handleConfigChange}
           generatedHTML={generatedHTML}
+          previewHTML={previewHTML}
           onGenerateHTML={handleGenerateHTML}
           onCopyHTML={handleCopyHTML}
           onReset={handleReset}

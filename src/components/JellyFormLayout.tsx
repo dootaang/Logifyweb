@@ -300,11 +300,7 @@ const JellyFormLayout: React.FC<JellyFormLayoutProps> = ({
     <div className="container">
       <div className="main-layout">
         <div className="settings-panel">
-          {/* 헤더 */}
-          <div className="header">
-            <h1>🐭 제리형 로그 제조기</h1>
-            <p>Design made by zzery</p>
-          </div>
+
 
           {/* 본문 내용을 최상단으로 이동 */}
           <ModernSection title="📄 본문 내용">

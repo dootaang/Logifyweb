@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   ModernButton,
   ModernInput,
@@ -153,6 +153,11 @@ interface WordReplacement {
   to: string
 }
 
+interface ChatSection {
+  id: string;
+  content: string;
+}
+
 interface BannerConfig {
   // 프로필 설정
   showProfile: boolean
@@ -208,6 +213,7 @@ interface BannerConfig {
   contentTextColor: string
   fontSize: number
   lineHeight: number
+  chatSections: ChatSection[]
 }
 
 interface BannerFormLayoutProps {
@@ -229,6 +235,18 @@ const BannerFormLayout = ({
 }: BannerFormLayoutProps) => {
   const [activeTab, setActiveTab] = useState('content')
   const [isDarkMode, setIsDarkMode] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState('')
+  
+  // 채팅 섹션 상태 추가
+  const [chatSections, setChatSections] = useState<ChatSection[]>([
+    { id: 'default', content: config.content || '' }
+  ]);
+  
+  // 텍스트에어리어 참조 추가
+  const textareaRefs = useRef<{ [key: string]: HTMLTextAreaElement | null }>({});
+  
+  // 자동 저장 키 상수 추가
+  const AUTOSAVE_PREFIX = 'autoSavedBanner_v1_';
 
   // 다크모드 감지
   useEffect(() => {
@@ -244,7 +262,85 @@ const BannerFormLayout = ({
     return () => darkModeQuery.removeEventListener('change', checkDarkMode)
   }, [])
 
+  // 이미지 업로드 핸들러
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    // 파일 크기 체크 (5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setUploadStatus('❌ 파일 크기가 5MB를 초과합니다.')
+      return
+    }
+
+    // 파일 타입 체크
+    if (!file.type.startsWith('image/')) {
+      setUploadStatus('❌ 이미지 파일만 업로드 가능합니다.')
+      return
+    }
+
+    setUploadStatus('⏳ 업로드 중...')
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        handleConfigChange('imageUrl', data.url)
+        if (data.isDataUrl) {
+          setUploadStatus('✅ 업로드 성공! (base64 변환됨)')
+        } else {
+          setUploadStatus('✅ 업로드 성공!')
+        }
+        
+        // 3초 후 상태 메시지 제거
+        setTimeout(() => setUploadStatus(''), 3000)
+      } else {
+        const errorData = await response.json()
+        setUploadStatus(`❌ 업로드 실패: ${errorData.error || '알 수 없는 오류'}`)
+      }
+    } catch (error) {
+      console.error('업로드 오류:', error)
+      setUploadStatus('❌ 업로드 중 오류가 발생했습니다.')
+    }
+  }
+
+  // HTML에서 이미지 URL 추출하는 함수
+  const extractImageUrlFromHtml = (htmlString: string) => {
+    const imgTagRegex = /<img[^>]+src=["']([^"']+)["'][^>]*>/i
+    const match = htmlString.match(imgTagRegex)
+    
+    if (match && match[1]) {
+      return match[1]
+    }
+    
+    return htmlString
+  }
+
+  // 입력값이 HTML인지 확인하는 함수
+  const isHtmlImageTag = (input: string) => {
+    return input.includes('<img') && input.includes('src=')
+  }
+
+  // 이미지 삭제 함수 추가
+  const handleImageDelete = () => {
+    handleConfigChange('imageUrl', '');
+  };
+
   const handleConfigChange = (field: string, value: any) => {
+    // 이미지 URL 필드에서 HTML 코드 자동 추출
+    if (field === 'imageUrl' && typeof value === 'string') {
+      if (isHtmlImageTag(value)) {
+        value = extractImageUrlFromHtml(value)
+      }
+    }
+    
     onConfigChange({ [field]: value })
   }
 
@@ -285,6 +381,99 @@ const BannerFormLayout = ({
     const newReplacements = config.wordReplacements.filter((_, i) => i !== index)
     onConfigChange({ wordReplacements: newReplacements })
   }
+
+  // 자동 저장 설정
+  const setupAutoSave = (sectionId: string, content: string) => {
+    try {
+      localStorage.setItem(`${AUTOSAVE_PREFIX}${sectionId}`, content);
+    } catch (error) {
+      console.error('자동 저장 오류:', error);
+    }
+  };
+
+  // 자동 저장된 내용 불러오기
+  const loadAutoSaved = (sectionId: string): string => {
+    try {
+      return localStorage.getItem(`${AUTOSAVE_PREFIX}${sectionId}`) || '';
+    } catch (error) {
+      console.error('자동 저장 불러오기 오류:', error);
+      return '';
+    }
+  };
+
+  // 채팅 섹션 업데이트
+  const updateChatSection = (sectionId: string, content: string) => {
+    const newSections = chatSections.map(section => 
+      section.id === sectionId ? { ...section, content } : section
+    );
+    setChatSections(newSections);
+    
+    // 자동 저장
+    setupAutoSave(sectionId, content);
+    
+    // 섹션 배열을 config에 전달
+    const combinedContent = newSections.map(section => section.content).filter(c => c.trim()).join('\n\n');
+    onConfigChange({ 
+      content: combinedContent,
+      chatSections: newSections 
+    });
+  };
+
+  // 채팅 섹션 추가
+  const addChatSection = () => {
+    const newId = `banner_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const newSection: ChatSection = { id: newId, content: '' };
+    setChatSections(prev => [...prev, newSection]);
+  };
+
+  // 채팅 섹션 삭제
+  const removeChatSection = (sectionId: string) => {
+    if (chatSections.length <= 1) {
+      alert('최소 하나의 내용 섹션은 필요합니다.');
+      return;
+    }
+    
+    if (!confirm('이 내용 섹션을 삭제하시겠습니까?')) {
+      return;
+    }
+    
+    // 자동 저장된 내용 삭제
+    try {
+      localStorage.removeItem(`${AUTOSAVE_PREFIX}${sectionId}`);
+    } catch (error) {
+      console.error('자동 저장 삭제 오류:', error);
+    }
+    
+    const newSections = chatSections.filter(section => section.id !== sectionId);
+    setChatSections(newSections);
+    
+    // 섹션 배열을 config에 전달
+    const combinedContent = newSections.map(section => section.content).filter(c => c.trim()).join('\n\n');
+    onConfigChange({ 
+      content: combinedContent,
+      chatSections: newSections 
+    });
+  };
+
+  // 채팅 섹션 이동
+  const moveChatSection = (sectionId: string, direction: 'up' | 'down') => {
+    const currentIndex = chatSections.findIndex(section => section.id === sectionId);
+    if (currentIndex === -1) return;
+    
+    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (newIndex < 0 || newIndex >= chatSections.length) return;
+    
+    const newSections = [...chatSections];
+    [newSections[currentIndex], newSections[newIndex]] = [newSections[newIndex], newSections[currentIndex]];
+    setChatSections(newSections);
+    
+    // 섹션 배열을 config에 전달
+    const combinedContent = newSections.map(section => section.content).filter(c => c.trim()).join('\n\n');
+    onConfigChange({ 
+      content: combinedContent,
+      chatSections: newSections 
+    });
+  };
 
   const applyTemplate = (templateName: string) => {
     const template = TEMPLATE_PRESETS[templateName as keyof typeof TEMPLATE_PRESETS]
@@ -345,11 +534,6 @@ const BannerFormLayout = ({
     <div className="container">
       <div className="main-layout">
         <div className="settings-panel">
-          {/* 헤더 */}
-          <div className="header">
-            <h1>배너 생성기 (V2)</h1>
-            <p>모던한 배너 스타일 생성기</p>
-          </div>
 
           {/* 탭 네비게이션 */}
           <ModernSection title="📋 메뉴">
@@ -402,13 +586,71 @@ const BannerFormLayout = ({
           {/* 내용 탭 */}
           {activeTab === 'content' && (
             <ModernSection title="📄 본문 내용">
-              <ModernFormGroup label="본문 내용">
-                <ModernTextarea
-                  value={config.content}
-                  onChange={(value) => handleConfigChange('content', value)}
-                  placeholder="본문 내용을 입력하세요..."
-                  rows={15}
-                />
+              <ModernHint>
+                <strong>본문 작성 안내</strong>
+                <div style={{ marginTop: '8px', fontSize: '13px', lineHeight: 1.7 }}>
+                  - 대화 부분은 큰따옴표 "텍스트" 또는 둥근따옴표 "텍스트"로 감싸주세요<br />
+                  - 속마음 부분은 작은따옴표 '텍스트'로 감싸주세요<br />
+                  - 여러 개의 본문 섹션을 추가해서 구분하여 작성할 수 있습니다
+                </div>
+              </ModernHint>
+
+              {/* 본문 섹션들 */}
+              {chatSections.map((section, index) => (
+                <div key={section.id} style={{ marginBottom: '20px', border: '1px solid var(--border)', borderRadius: '8px', padding: '16px' }}>
+                  {/* 섹션 헤더 */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <label style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                      본문 내용 {chatSections.length > 1 ? `${index + 1}` : ''}
+                    </label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <ModernButton
+                        onClick={() => moveChatSection(section.id, 'up')}
+                        disabled={index === 0}
+                        style={{ padding: '4px 8px', fontSize: '12px' }}
+                      >
+                        ▲
+                      </ModernButton>
+                      <ModernButton
+                        onClick={() => moveChatSection(section.id, 'down')}
+                        disabled={index === chatSections.length - 1}
+                        style={{ padding: '4px 8px', fontSize: '12px' }}
+                      >
+                        ▼
+                      </ModernButton>
+                      <ModernButton
+                        danger
+                        onClick={() => removeChatSection(section.id)}
+                        disabled={chatSections.length <= 1}
+                        style={{ padding: '4px 8px', fontSize: '12px' }}
+                      >
+                        X
+                      </ModernButton>
+                    </div>
+                  </div>
+
+                  {/* 텍스트에어리어 */}
+                  <textarea
+                    ref={(el) => {
+                      if (el) {
+                        textareaRefs.current[section.id] = el;
+                      }
+                    }}
+                    value={section.content}
+                    onChange={(e) => updateChatSection(section.id, e.target.value)}
+                    placeholder="본문 내용을 입력하세요..."
+                    rows={15}
+                    className="form-input form-textarea"
+                    style={{ width: '100%', minHeight: '200px' }}
+                  />
+                </div>
+              ))}
+
+              {/* 본문 섹션 추가 버튼 */}
+              <ModernFormGroup>
+                <ModernButton onClick={addChatSection}>
+                  본문 섹션 추가
+                </ModernButton>
               </ModernFormGroup>
               
               <ModernFormRow>
@@ -419,7 +661,7 @@ const BannerFormLayout = ({
                 </ModernFormGroup>
                 <ModernFormGroup>
                   <ModernButton onClick={onCopyHTML}>
-                    📋 HTML 복사
+                    ✨ 스타일 복사 (고급)
                   </ModernButton>
                 </ModernFormGroup>
                 <ModernFormGroup>
@@ -428,6 +670,10 @@ const BannerFormLayout = ({
                   </ModernButton>
                 </ModernFormGroup>
               </ModernFormRow>
+              
+              <ModernHint>
+                💡 <strong>스타일 복사 (고급)</strong>: 디자인과 이미지가 함께 클립보드에 복사됩니다. 글쓰기 에디터에 붙여넣기하면 HTML 에디터를 열지 않고도 자동으로 스타일이 적용됩니다!
+              </ModernHint>
             </ModernSection>
           )}
 
@@ -633,21 +879,128 @@ const BannerFormLayout = ({
 
                   {config.showProfileImage && (
                     <>
-                      <ModernFormGroup label="이미지 URL">
+                      {/* 로컬 이미지 업로드 섹션 */}
+                      <ModernFormGroup label="🖼️ 로컬 이미지 업로드">
+                        <div style={{
+                          border: '2px dashed #cbd5e0',
+                          borderRadius: '8px',
+                          padding: '20px',
+                          textAlign: 'center',
+                          backgroundColor: isDarkMode ? '#2d3748' : '#f7fafc',
+                          transition: 'all 0.2s ease'
+                        }}>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleImageUpload}
+                            style={{ display: 'none' }}
+                            id="banner-image-upload"
+                          />
+                          <label 
+                            htmlFor="banner-image-upload"
+                            style={{
+                              cursor: 'pointer',
+                              display: 'block'
+                            }}
+                          >
+                            <div style={{
+                              fontSize: '48px',
+                              marginBottom: '10px',
+                              color: isDarkMode ? '#a0aec0' : '#718096'
+                            }}>
+                              📁
+                            </div>
+                            <p style={{
+                              margin: '0 0 5px 0',
+                              fontWeight: 'bold',
+                              color: isDarkMode ? '#e2e8f0' : '#2d3748'
+                            }}>
+                              클릭하여 이미지 선택
+                            </p>
+                            <p style={{
+                              margin: 0,
+                              fontSize: '14px',
+                              color: isDarkMode ? '#a0aec0' : '#718096'
+                            }}>
+                              JPG, PNG, GIF 파일 지원 (최대 5MB)
+                            </p>
+                          </label>
+                        </div>
+                        {uploadStatus && (
+                          <div style={{
+                            marginTop: '10px',
+                            padding: '10px',
+                            borderRadius: '6px',
+                            backgroundColor: uploadStatus.includes('성공') ? '#c6f6d5' : '#fed7d7',
+                            color: uploadStatus.includes('성공') ? '#2f855a' : '#c53030',
+                            fontSize: '14px'
+                          }}>
+                            {uploadStatus}
+                          </div>
+                        )}
+                      </ModernFormGroup>
+
+                      {/* 외부 URL 섹션 */}
+                      <ModernFormGroup label="🌐 외부 이미지 URL">
                         <ModernInput
                           value={config.imageUrl}
                           onChange={(value) => handleConfigChange('imageUrl', value)}
-                          placeholder="프로필 이미지 URL"
+                          placeholder="프로필 이미지 URL 또는 HTML 코드"
                         />
                         <ModernHint>
-                          <p><strong>📌 이미지 업로드 방법 (가장 확실한 방법):</strong></p>
-                          <p>1️⃣ <a href="https://arca.live/b/characterai/write" target="_blank" rel="noopener noreferrer" style={{color: '#3498db', textDecoration: 'underline'}}>아카라이브 게시글 작성 화면</a>으로 이동</p>
-                          <p>2️⃣ 이미지를 드래그&드롭 또는 클릭하여 업로드</p>
-                          <p>3️⃣ 에디터에 삽입된 이미지의 HTML 코드를 복사</p>
-                          <p>4️⃣ 여기 "이미지 URL" 필드에 붙여넣기</p>
-                          <p>5️⃣ URL이 자동으로 추출되어 적용됩니다</p>
+                          <p><strong>💡 사용 방법:</strong></p>
+                          <p>• 이미지 URL을 직접 입력하거나</p>
+                          <p>• 아카라이브 등에서 복사한 HTML 코드를 붙여넣으면 자동으로 URL이 추출됩니다</p>
                         </ModernHint>
                       </ModernFormGroup>
+
+                      {/* 현재 이미지 표시 및 삭제 기능 */}
+                      {config.imageUrl && (
+                        <ModernFormGroup label="🖼️ 현재 프로필 이미지">
+                          <div style={{
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '8px',
+                            padding: '10px',
+                            backgroundColor: isDarkMode ? '#2d3748' : '#f7fafc'
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                              <img 
+                                src={config.imageUrl} 
+                                alt="프로필 이미지 미리보기"
+                                style={{
+                                  width: '40px',
+                                  height: '40px',
+                                  objectFit: 'cover',
+                                  borderRadius: '50%',
+                                  border: '1px solid #cbd5e0'
+                                }}
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).style.display = 'none';
+                                }}
+                              />
+                              <span style={{
+                                flex: 1,
+                                fontSize: '14px',
+                                color: isDarkMode ? '#a0aec0' : '#718096',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap'
+                              }}>
+                                {config.imageUrl.length > 50 
+                                  ? config.imageUrl.substring(0, 50) + '...' 
+                                  : config.imageUrl}
+                              </span>
+                            </div>
+                            <ModernButton 
+                              danger 
+                              onClick={handleImageDelete}
+                              style={{ fontSize: '12px', padding: '4px 8px' }}
+                            >
+                              🗑️ 삭제
+                            </ModernButton>
+                          </div>
+                        </ModernFormGroup>
+                      )}
 
                       <ModernFormGroup>
                         <ModernCheckbox

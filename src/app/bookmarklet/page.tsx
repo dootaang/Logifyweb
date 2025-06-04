@@ -5,10 +5,34 @@ import Navigation from '@/components/Navigation'
 import BookmarkletFormLayout from '@/components/BookmarkletFormLayout'
 import BookmarkletGenerator from '@/generators/BookmarkletGenerator'
 import { DarkModeUtils } from '@/utils/styles'
+import { copyToAdvancedClipboard, copyToSimpleClipboard } from '@/utils/advancedClipboard'
 
 interface WordReplacement {
   from: string;
   to: string;
+}
+
+// 채팅 섹션 인터페이스 추가
+interface ChatSection {
+  id: string;
+  content: string;
+}
+
+interface BookmarkletConfig {
+  content: string;
+  backgroundColor: string;
+  textColor: string;
+  highlightColor: string;
+  emphasisColor: string;
+  fontSize: number;
+  lineHeight: number;
+  containerWidth: number;
+  borderRadius: number;
+  padding: number;
+  boxShadow: string;
+  wordReplacements: WordReplacement[];
+  // chatSections 추가
+  chatSections?: ChatSection[];
 }
 
 // 북마클릿형 기본 설정
@@ -33,10 +57,12 @@ const defaultBookmarkletConfig = {
   padding: 2,
   boxShadow: '0 3px 6px rgba(0,0,0,0.16), 0 3px 6px rgba(0,0,0,0.23)',
   wordReplacements: [
-    { from: '', to: '' },
+    { from: '그는', to: '그녀는' },
     { from: '', to: '' },
     { from: '', to: '' }
-  ] as WordReplacement[]
+  ] as WordReplacement[],
+  // chatSections 기본값 추가
+  chatSections: [] as ChatSection[]
 }
 
 export default function BookmarkletPage() {
@@ -116,7 +142,7 @@ export default function BookmarkletPage() {
   }, [config])
 
   // 핸들러 함수들
-  const handleConfigChange = (newConfig: Partial<typeof defaultBookmarkletConfig>) => {
+  const handleConfigChange = (newConfig: Partial<BookmarkletConfig>) => {
     setConfig(prev => ({
       ...prev,
       ...newConfig
@@ -129,11 +155,24 @@ export default function BookmarkletPage() {
     setGeneratedHTML(html)
   }
 
-  const handleCopyHTML = () => {
-    if (typeof navigator !== 'undefined') {
-      navigator.clipboard.writeText(generatedHTML).then(() => {
-        alert('북마클릿형 HTML 코드가 클립보드에 복사되었습니다!')
-      })
+  const handleCopyHTML = async () => {
+    try {
+      // 고급 클립보드 복사 시도 (HTML + 이미지)
+      const success = await copyToAdvancedClipboard({
+        htmlContent: generatedHTML,
+        plainTextContent: generatedHTML,
+        title: '북마클릿형 로그',
+        author: '북마클릿형 생성기'
+      });
+
+      if (success) {
+        alert('🎉 북마클릿형 로그가 스타일과 이미지와 함께 클립보드에 복사되었습니다!\n\n이제 글쓰기 에디터에 붙여넣기하면 디자인이 그대로 적용됩니다.');
+      } else {
+        alert('📋 북마클릿형 HTML 코드가 클립보드에 복사되었습니다!\n\n(고급 복사 기능을 지원하지 않는 브라우저입니다)');
+      }
+    } catch (error) {
+      console.error('클립보드 복사 실패:', error);
+      alert('❌ 클립보드 복사에 실패했습니다. 다시 시도해주세요.');
     }
   }
 
@@ -152,7 +191,7 @@ export default function BookmarkletPage() {
         <div className="page-header">
           <h1 className="page-title">
             <span className="page-icon">📚</span>
-            북마클릿형 로그 생성기
+            북마클릿형 로그 제조기
           </h1>
           <p className="page-description">
             전통적이고 안정적인 북마클릿 스타일의 로그를 생성합니다.
